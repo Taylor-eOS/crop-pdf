@@ -1,6 +1,8 @@
 import fitz  #PyMuPDF
 import numpy as np
 
+#Assume consistent page positions and crop pages to the same box
+
 def extract_main_text_bbox(page):
     """
     Extracts the bounding box of the main text on the page, taking into account indents and possible exclusions
