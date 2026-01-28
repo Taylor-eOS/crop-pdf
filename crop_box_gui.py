@@ -1,10 +1,10 @@
+import io
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import fitz
 from PIL import Image, ImageTk
-import io
 
-preview_pages = 25
+preview_pages = 50
 
 class PDFCropperApp:
     def __init__(self, root):
@@ -19,7 +19,7 @@ class PDFCropperApp:
         self.crop_btn = ttk.Button(self.button_frame, text="Crop PDF", command=self.crop_pdf, state=tk.DISABLED)
         self.crop_btn.pack(side=tk.RIGHT, padx=2)
         self.doc = None
-        self.zoom = 1.0
+        self.zoom = 2.0
         self.scale_factor = 1.0
         self.max_width = 0
         self.max_height = 0
@@ -42,8 +42,15 @@ class PDFCropperApp:
             messagebox.showerror("Error", "The selected PDF has no pages.")
             return
         num_pages = min(preview_pages, len(self.doc))
-        self.max_width = int(max(p.rect.width for p in self.doc[:num_pages]))
-        self.max_height = int(max(p.rect.height for p in self.doc[:num_pages]))
+        self.max_page_width_pt  = max(p.rect.width  for p in self.doc[:num_pages])
+        self.max_page_height_pt = max(p.rect.height for p in self.doc[:num_pages])
+        mat = fitz.Matrix(self.zoom, self.zoom)
+        self.max_width_px  = 0
+        self.max_height_px = 0
+        for page_num in range(num_pages):
+            pix = self.doc[page_num].get_pixmap(matrix=mat)
+            self.max_width_px  = max(self.max_width_px,  pix.width)
+            self.max_height_px = max(self.max_height_px, pix.height)
         self.generate_composite()
         self.display_composite()
         self.crop_btn.config(state=tk.NORMAL)
@@ -51,26 +58,27 @@ class PDFCropperApp:
     def generate_composite(self):
         num_pages = min(preview_pages, len(self.doc))
         base = None
-        alpha_per_page = 100  #Increased from 30 for darker text
+        alpha_per_page = 180
+        threshold = 250
+        mat = fitz.Matrix(self.zoom, self.zoom)
         for page_num in range(num_pages):
             page = self.doc[page_num]
-            mat = fitz.Matrix(self.zoom, self.zoom)
             pix = page.get_pixmap(matrix=mat)
             img_data = pix.tobytes("ppm")
             img = Image.open(io.BytesIO(img_data)).convert("RGBA")
-            page_base = Image.new("RGBA", (self.max_width, self.max_height), (255, 255, 255, 0))
+            page_base = Image.new("RGBA", (self.max_width_px, self.max_height_px), (255, 255, 255, 0))
             page_base.paste(img, (0, 0))
             datas = page_base.getdata()
             new_data = []
-            threshold = 220  #Lower threshold to include more text
             for item in datas:
-                if item[0] < threshold or item[1] < threshold or item[2] < threshold:
-                    new_data.append((item[0], item[1], item[2], alpha_per_page))  #Less transparent
+                r, g, b, a = item
+                if r < threshold or g < threshold or b < threshold:
+                    new_data.append((r, g, b, alpha_per_page))
                 else:
                     new_data.append((255, 255, 255, 0))
             page_base.putdata(new_data)
             if base is None:
-                base = Image.new("RGBA", (self.max_width, self.max_height), (255, 255, 255, 255))
+                base = Image.new("RGBA", (self.max_width_px, self.max_height_px), (255, 255, 255, 255))
             base.alpha_composite(page_base)
         self.composite_img = base.convert("RGB")
 
@@ -109,20 +117,22 @@ class PDFCropperApp:
         comp_x1 = disp_x1 / self.scale_factor
         comp_y1 = disp_y1 / self.scale_factor
         pdf_x0 = comp_x0 / self.zoom
+        pdf_y1 = self.max_page_height_pt - (comp_y0 / self.zoom)
         pdf_x1 = comp_x1 / self.zoom
-        pdf_y0 = self.max_height - (comp_y1 / self.zoom)
-        pdf_y1 = self.max_height - (comp_y0 / self.zoom)
-        crop_rect = fitz.Rect(pdf_x0, pdf_y0, pdf_x1, pdf_y1)
-        crop_rect.normalize()
+        pdf_y0 = self.max_page_height_pt - (comp_y1 / self.zoom)
+        safety = 2.0
+        crop_rect = fitz.Rect(pdf_x0 - safety, pdf_y0 - safety, pdf_x1 + safety, pdf_y1 + safety)
+        crop_rect = crop_rect & fitz.Rect(0, 0, self.max_page_width_pt, self.max_page_height_pt)
         output_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF Files", "*.pdf")])
         if not output_path:
             return
         for page in self.doc:
-            media_box = page.rect
-            adjusted_rect = crop_rect.intersect(media_box)
-            if not adjusted_rect.is_empty:
-                page.set_cropbox(adjusted_rect)
-        self.doc.save(output_path)
+            page_media = page.rect
+            adjusted = crop_rect & page_media
+            if not adjusted.is_empty:
+                page.set_cropbox(adjusted)
+                page.set_mediabox(adjusted)
+        self.doc.save(output_path, garbage=4, deflate=True)
         self.doc.close()
         messagebox.showinfo("Success", f"PDF saved to {output_path}")
         self.reset_app()
