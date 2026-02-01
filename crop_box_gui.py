@@ -10,7 +10,7 @@ class PDFCropperApp:
     def __init__(self, root):
         self.root = root
         self.root.title("PDF Cropper")
-        self.canvas = tk.Canvas(self.root, width=800, height=600, bg='white')
+        self.canvas = tk.Canvas(self.root, width=800, height=600, bg='#e8e8e8')
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.button_frame = ttk.Frame(self.root)
         self.button_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -103,6 +103,7 @@ class PDFCropperApp:
     def display_composite(self):
         if self.composite_img is None:
             return
+        self.canvas.delete("all")
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
         img_width, img_height = self.composite_img.size
@@ -117,7 +118,7 @@ class PDFCropperApp:
         self.start_y = event.y
         if self.rect_id:
             self.canvas.delete(self.rect_id)
-        self.rect_id = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, outline='red')
+        self.rect_id = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, outline='red', width=3)
 
     def on_drag(self, event):
         if self.rect_id:
@@ -135,21 +136,23 @@ class PDFCropperApp:
         comp_x1 = disp_x1 / self.scale_factor
         comp_y1 = disp_y1 / self.scale_factor
         pdf_x0 = comp_x0 / self.zoom
-        pdf_y1 = self.max_page_height_pt - (comp_y0 / self.zoom)
         pdf_x1 = comp_x1 / self.zoom
-        pdf_y0 = self.max_page_height_pt - (comp_y1 / self.zoom)
+        pdf_top = self.max_page_height_pt - (comp_y0 / self.zoom)
+        pdf_bottom = self.max_page_height_pt - (comp_y1 / self.zoom)
         safety = 2.0
-        crop_rect = fitz.Rect(pdf_x0 - safety, pdf_y0 - safety, pdf_x1 + safety, pdf_y1 + safety)
-        crop_rect = crop_rect & fitz.Rect(0, 0, self.max_page_width_pt, self.max_page_height_pt)
+        crop_rect = fitz.Rect(pdf_x0 - safety, pdf_bottom - safety, pdf_x1 + safety, pdf_top + safety)
+        print(f"Calculated crop_rect (in points): {crop_rect}")
         output_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF Files", "*.pdf")])
         if not output_path:
             return
-        for page in self.doc:
-            page_media = page.rect
-            adjusted = crop_rect & page_media
-            if not adjusted.is_empty:
+        for i, page in enumerate(self.doc):
+            adjusted = crop_rect & page.rect
+            if adjusted.width > 0 and adjusted.height > 0:
                 page.set_cropbox(adjusted)
                 page.set_mediabox(adjusted)
+                print(f"Page {i+1}: applied crop ({adjusted.x0:.1f}, {adjusted.y0:.1f}, {adjusted.x1:.1f}, {adjusted.y1:.1f})")
+            else:
+                print(f"Page {i+1}: no crop (empty after intersection)")
         self.doc.save(output_path, garbage=4, deflate=True)
         self.doc.close()
         messagebox.showinfo("Success", f"PDF saved to {output_path}")
