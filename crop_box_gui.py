@@ -4,7 +4,7 @@ from tkinter import filedialog, ttk, messagebox
 import fitz
 from PIL import Image, ImageTk
 
-preview_pages = 50
+preview_pages = 100
 
 class PDFCropperApp:
     def __init__(self, root):
@@ -32,6 +32,11 @@ class PDFCropperApp:
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
+        self.handle_size = 8
+        self.handle_ids = {}
+        self.active_handle = None
+        self.move_offset = (0, 0)
+        self.min_rect_size = 20
 
     def open_pdf(self):
         file_path = filedialog.askopenfilename(filetypes=[("PDF Files", "*.pdf")])
@@ -112,20 +117,120 @@ class PDFCropperApp:
         resized_img = self.composite_img.resize(new_size, Image.LANCZOS)
         self.tk_image = ImageTk.PhotoImage(resized_img)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
+        self.create_default_rect()
+
+    def create_default_rect(self):
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw <= 1:
+            cw = 800
+        if ch <= 1:
+            ch = 600
+        x0 = int(cw * 0.1)
+        y0 = int(ch * 0.1)
+        x1 = int(cw * 0.9)
+        y1 = int(ch * 0.9)
+        if hasattr(self, "rect_id") and self.rect_id:
+            self.canvas.coords(self.rect_id, x0, y0, x1, y1)
+        else:
+            self.rect_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline='red', width=3)
+        self.current_rect = (x0, y0, x1, y1)
+        self.update_handles()
+
+    def update_handles(self):
+        for hid in list(self.handle_ids.values()):
+            try:
+                self.canvas.delete(hid)
+            except Exception:
+                pass
+        self.handle_ids = {}
+        x0, y0, x1, y1 = self.current_rect
+        cx = (x0 + x1) / 2
+        cy = (y0 + y1) / 2
+        s = self.handle_size
+        self.handle_ids['left'] = self.canvas.create_rectangle(x0 - s, cy - s, x0 + s, cy + s, fill='red', outline='black')
+        self.handle_ids['right'] = self.canvas.create_rectangle(x1 - s, cy - s, x1 + s, cy + s, fill='red', outline='black')
+        self.handle_ids['top'] = self.canvas.create_rectangle(cx - s, y0 - s, cx + s, y0 + s, fill='red', outline='black')
+        self.handle_ids['bottom'] = self.canvas.create_rectangle(cx - s, y1 - s, cx + s, y1 + s, fill='red', outline='black')
+
+    def detect_handle(self, x, y):
+        for name, hid in self.handle_ids.items():
+            coords = self.canvas.coords(hid)
+            if coords and coords[0] <= x <= coords[2] and coords[1] <= y <= coords[3]:
+                return name
+        rect_coords = self.canvas.coords(self.rect_id) if self.rect_id else None
+        if rect_coords and rect_coords[0] <= x <= rect_coords[2] and rect_coords[1] <= y <= rect_coords[3]:
+            return 'move'
+        return None
+
+    def clamp_rect(self, x0, y0, x1, y1):
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw <= 1:
+            cw = 800
+        if ch <= 1:
+            ch = 600
+        if x0 < 0:
+            x0 = 0
+        if y0 < 0:
+            y0 = 0
+        if x1 > cw:
+            x1 = cw
+        if y1 > ch:
+            y1 = ch
+        if x1 - x0 < self.min_rect_size:
+            mid = (x0 + x1) / 2
+            x0 = int(max(0, mid - self.min_rect_size / 2))
+            x1 = int(min(cw, mid + self.min_rect_size / 2))
+        if y1 - y0 < self.min_rect_size:
+            mid = (y0 + y1) / 2
+            y0 = int(max(0, mid - self.min_rect_size / 2))
+            y1 = int(min(ch, mid + self.min_rect_size / 2))
+        return int(x0), int(y0), int(x1), int(y1)
 
     def on_press(self, event):
-        self.start_x = event.x
-        self.start_y = event.y
-        if self.rect_id:
-            self.canvas.delete(self.rect_id)
-        self.rect_id = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y, outline='red', width=3)
+        x = event.x
+        y = event.y
+        if not hasattr(self, "rect_id") or not self.rect_id:
+            self.create_default_rect()
+        handle = self.detect_handle(x, y)
+        self.active_handle = handle
+        if handle == 'move':
+            x0, y0, x1, y1 = self.current_rect
+            self.move_offset = (x - x0, y - y0)
+        else:
+            self.move_offset = (0, 0)
 
     def on_drag(self, event):
-        if self.rect_id:
-            self.canvas.coords(self.rect_id, self.start_x, self.start_y, event.x, event.y)
+        if not self.active_handle:
+            return
+        x = event.x
+        y = event.y
+        x0, y0, x1, y1 = self.current_rect
+        if self.active_handle == 'left':
+            x0 = min(x, x1 - self.min_rect_size)
+        elif self.active_handle == 'right':
+            x1 = max(x, x0 + self.min_rect_size)
+        elif self.active_handle == 'top':
+            y0 = min(y, y1 - self.min_rect_size)
+        elif self.active_handle == 'bottom':
+            y1 = max(y, y0 + self.min_rect_size)
+        elif self.active_handle == 'move':
+            w = x1 - x0
+            h = y1 - y0
+            nx0 = x - self.move_offset[0]
+            ny0 = y - self.move_offset[1]
+            nx1 = nx0 + w
+            ny1 = ny0 + h
+            x0, y0, x1, y1 = nx0, ny0, nx1, ny1
+        x0, y0, x1, y1 = self.clamp_rect(x0, y0, x1, y1)
+        self.canvas.coords(self.rect_id, x0, y0, x1, y1)
+        self.current_rect = (x0, y0, x1, y1)
+        self.update_handles()
 
     def on_release(self, event):
-        self.current_rect = (min(self.start_x, event.x), min(self.start_y, event.y), max(self.start_x, event.x), max(self.start_y, event.y))
+        self.active_handle = None
+        self.move_offset = (0, 0)
 
     def crop_pdf(self):
         if not self.current_rect or not self.doc:
