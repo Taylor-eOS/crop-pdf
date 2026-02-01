@@ -140,19 +140,33 @@ class PDFCropperApp:
         pdf_top = self.max_page_height_pt - (comp_y0 / self.zoom)
         pdf_bottom = self.max_page_height_pt - (comp_y1 / self.zoom)
         safety = 2.0
-        crop_rect = fitz.Rect(pdf_x0 - safety, pdf_bottom - safety, pdf_x1 + safety, pdf_top + safety)
-        print(f"Calculated crop_rect (in points): {crop_rect}")
+        crop_rect = fitz.Rect(
+            pdf_x0 - safety,
+            pdf_bottom - safety,
+            pdf_x1 + safety,
+            pdf_top + safety)
+        page0 = self.doc[0]
+        page_rect = page0.rect
+        adjusted = crop_rect & page_rect
+        print(f"display rect px:   ({disp_x0:.1f},{disp_y0:.1f}) → ({disp_x1:.1f},{disp_y1:.1f})")
+        print(f"composite px:      ({comp_x0:.1f},{comp_y0:.1f}) → ({comp_x1:.1f},{comp_y1:.1f})")
+        print(f"pdf raw y-down pt: ({pdf_x0:.1f},{comp_y0 / self.zoom:.1f}) → ({pdf_x1:.1f},{comp_y1 / self.zoom:.1f})")
+        print(f"pdf flipped pt:    ({pdf_x0:.1f},{pdf_bottom:.1f}) → ({pdf_x1:.1f},{pdf_top:.1f})")
+        print(f"crop rect pt:      ({crop_rect.x0:.1f},{crop_rect.y0:.1f},{crop_rect.x1:.1f},{crop_rect.y1:.1f})")
+        print(f"page mediabox pt:  ({page_rect.x0:.1f},{page_rect.y0:.1f},{page_rect.x1:.1f},{page_rect.y1:.1f})")
+        print(f"applied rect pt:   ({adjusted.x0:.1f},{adjusted.y0:.1f},{adjusted.x1:.1f},{adjusted.y1:.1f})")
+        print(f"applied size pt:   {adjusted.width:.1f} × {adjusted.height:.1f}")
+        if adjusted.width <= 0 or adjusted.height <= 0:
+            print("adjusted rect empty, aborting")
+            return
         output_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF Files", "*.pdf")])
         if not output_path:
             return
-        for i, page in enumerate(self.doc):
-            adjusted = crop_rect & page.rect
-            if adjusted.width > 0 and adjusted.height > 0:
-                page.set_cropbox(adjusted)
-                page.set_mediabox(adjusted)
-                print(f"Page {i+1}: applied crop ({adjusted.x0:.1f}, {adjusted.y0:.1f}, {adjusted.x1:.1f}, {adjusted.y1:.1f})")
-            else:
-                print(f"Page {i+1}: no crop (empty after intersection)")
+        for page in self.doc:
+            page_adj = crop_rect & page.rect
+            if page_adj.width > 0 and page_adj.height > 0:
+                page.set_cropbox(page_adj)
+                page.set_mediabox(page_adj)
         self.doc.save(output_path, garbage=4, deflate=True)
         self.doc.close()
         messagebox.showinfo("Success", f"PDF saved to {output_path}")
