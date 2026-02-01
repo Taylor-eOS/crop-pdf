@@ -61,7 +61,20 @@ class PDFCropperApp:
         base = None
         first_pix = self.doc[0].get_pixmap(matrix=mat)
         first_img = Image.open(io.BytesIO(first_pix.tobytes("ppm"))).convert("RGB")
-        bg_r, bg_g, bg_b = first_img.getpixel((0, 0))
+        w, h = first_img.size
+        samples = []
+        y_positions = [int(h * p) for p in (0.015, 0.03, 0.045)]
+        x0 = int(w * 0.45)
+        x1 = int(w * 0.55)
+        for y in y_positions:
+            for x in range(x0, x1, max(1, (x1 - x0) // 10)):
+                samples.append(first_img.getpixel((x, min(y, h - 1))))
+        rs = sorted(p[0] for p in samples)
+        gs = sorted(p[1] for p in samples)
+        bs = sorted(p[2] for p in samples)
+        bg_r = rs[len(rs) // 2]
+        bg_g = gs[len(gs) // 2]
+        bg_b = bs[len(bs) // 2]
         max_alpha = 180
         dist_threshold = 80.0
         for page_num in range(num_pages):
