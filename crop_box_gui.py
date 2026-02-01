@@ -57,25 +57,30 @@ class PDFCropperApp:
 
     def generate_composite(self):
         num_pages = min(preview_pages, len(self.doc))
-        base = None
-        alpha_per_page = 180
-        threshold = 250
         mat = fitz.Matrix(self.zoom, self.zoom)
+        base = None
+        first_pix = self.doc[0].get_pixmap(matrix=mat)
+        first_img = Image.open(io.BytesIO(first_pix.tobytes("ppm"))).convert("RGB")
+        bg_r, bg_g, bg_b = first_img.getpixel((0, 0))
+        max_alpha = 180
+        dist_threshold = 80.0
         for page_num in range(num_pages):
-            page = self.doc[page_num]
-            pix = page.get_pixmap(matrix=mat)
-            img_data = pix.tobytes("ppm")
-            img = Image.open(io.BytesIO(img_data)).convert("RGBA")
+            pix = self.doc[page_num].get_pixmap(matrix=mat)
+            img = Image.open(io.BytesIO(pix.tobytes("ppm"))).convert("RGBA")
             page_base = Image.new("RGBA", (self.max_width_px, self.max_height_px), (255, 255, 255, 0))
             page_base.paste(img, (0, 0))
             datas = page_base.getdata()
             new_data = []
-            for item in datas:
-                r, g, b, a = item
-                if r < threshold or g < threshold or b < threshold:
-                    new_data.append((r, g, b, alpha_per_page))
-                else:
+            for r, g, b, a in datas:
+                dr = r - bg_r
+                dg = g - bg_g
+                db = b - bg_b
+                dist = (dr * dr + dg * dg + db * db) ** 0.5
+                if dist < dist_threshold:
                     new_data.append((255, 255, 255, 0))
+                else:
+                    alpha = int(min(max_alpha, (dist / dist_threshold) * max_alpha))
+                    new_data.append((r, g, b, alpha))
             page_base.putdata(new_data)
             if base is None:
                 base = Image.new("RGBA", (self.max_width_px, self.max_height_px), (255, 255, 255, 255))
